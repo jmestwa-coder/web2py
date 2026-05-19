@@ -83,6 +83,22 @@ def _is_within_root(path, root):
     return path == root or path.startswith(root + os.sep)
 
 
+def _check_app_path(app, path):
+    app_root = os.path.abspath(apath(app, r=request))
+    path = os.path.abspath(os.path.normpath(path))
+    if not _is_within_root(path, app_root):
+        raise HTTP(403)
+    return path
+
+
+def _join_app_path(app, base, *paths):
+    base = _check_app_path(app, base)
+    path = os.path.abspath(os.path.normpath(os.path.join(base, *paths)))
+    if not _is_within_root(path, base):
+        raise HTTP(403)
+    return path
+
+
 def safe_open(a, b):
     if (DEMO_MODE or is_gae) and ('w' in b or 'a' in b):
         class tmp:
@@ -1378,6 +1394,7 @@ def create_file():
                 request.vars.location += request.vars.dir + '/'
             app = get_app(name=request.vars.location.split('/')[0])
             path = apath(request.vars.location, r=request)
+        path = _check_app_path(app, path)
         filename = re.sub(r'[^\w./-]+', '_', request.vars.filename)
         if path[-7:] == '/rules/':
             # Handle plural rules files
@@ -1413,7 +1430,7 @@ def create_file():
                 raise SyntaxError
             if not filename[-3:] == '.py':
                 filename += '.py'
-            path = os.path.join(apath(app, r=request), 'languages', filename)
+            path = _join_app_path(app, os.path.join(apath(app, r=request), 'languages'), filename)
             if not os.path.exists(path):
                 safe_write(path, '')
             # create language xx[-yy].py file:
@@ -1492,7 +1509,7 @@ def create_file():
         else:
             redirect(request.vars.sender + anchor)
 
-        full_filename = os.path.join(path, filename)
+        full_filename = _join_app_path(app, path, filename)
         dirpath = os.path.dirname(full_filename)
 
         if not os.path.exists(dirpath):
@@ -1598,7 +1615,7 @@ def upload_file():
         if path[-11:] == '/languages/' and not filename[-3:] == '.py':
             filename += '.py'
 
-        filename = os.path.join(path, filename)
+        filename = _join_app_path(app, path, filename)
         dirpath = os.path.dirname(filename)
 
         if not os.path.exists(dirpath):

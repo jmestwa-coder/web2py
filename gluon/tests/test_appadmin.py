@@ -299,6 +299,86 @@ class TestAppAdmin(unittest.TestCase):
         self.assertFalse(is_path_allowed('/tmp/malicious'),
                         "Should block temp directory access")
 
+    def test_admin_file_manager_boundaries(self):
+        """Test that admin file manager enforces app boundaries using production helpers."""
+        from gluon.compileapp import build_environment
+        from gluon.globals import Request, Response, Session, current
+        from gluon.http import HTTP
+        import os
+
+        # 1. Setup a realistic environment for the admin controller
+        request = Request(env={})
+        request.application = 'admin'
+        request.controller = 'default'
+        request.folder = os.path.abspath('applications/admin')
+        request.env.http_host = '127.0.0.1'
+        response = Response()
+        session = Session()
+        current.request = request
+        current.response = response
+        current.session = session
+
+        env = build_environment(request, response, session)
+        # Mock required globals normally provided by admin models
+        env.update({
+            'is_mobile': False,
+            'DEMO_MODE': False,
+            'MULTI_USER_MODE': False,
+            'is_gae': False,
+            'FILTER_APPS': [],
+            'is_manager': lambda: True,
+        })
+
+        # 2. Load the actual production controller
+        controller_path = os.path.join(request.folder, 'controllers', 'default.py')
+        with open(controller_path, 'rb') as f:
+            code = f.read()
+        exec(compile(code, 'default.py', 'exec'), env)
+
+        _join_app_path = env['_join_app_path']
+        
+        web2py_apps_root = os.path.abspath('applications')
+        app_root = os.path.join(web2py_apps_root, "welcome")
+
+        # A. Valid Nested Paths Still Work
+        # Selected app: welcome, Location: views/, Filename: default/index.html
+        base = os.path.join(app_root, "views")
+        res = _join_app_path("welcome", base, "default/index.html")
+        self.assertTrue(res.endswith(os.path.join("welcome", "views", "default", "index.html")))
+
+        static_base = os.path.join(app_root, "static")
+        static_res = _join_app_path("welcome", static_base, "js/app.js")
+        self.assertTrue(static_res.endswith(os.path.join("welcome", "static", "js", "app.js")))
+
+        # B. Traversal Outside Base Directory Is Blocked
+        # Try to escape views/ into controllers/
+        self.assertRaises(
+            HTTP,
+            _join_app_path,
+            "welcome",
+            os.path.join(app_root, "views"),
+            "../controllers/default.py"
+        )
+
+        # C. Cross-Application Escapes Are Blocked
+        # Try to escape welcome/ into admin/
+        self.assertRaises(
+            HTTP,
+            _join_app_path,
+            "welcome",
+            os.path.join(app_root, "static"),
+            "../../admin/controllers/default.py"
+        )
+
+        # D. Absolute Path Injection Is Blocked
+        self.assertRaises(
+            HTTP,
+            _join_app_path,
+            "welcome",
+            os.path.join(app_root, "static"),
+            "/tmp/pwn.py"
+        )
+
     def test_safe_eval_expression_blocks_function_calls(self):
         """Test that safe_eval_expression blocks arbitrary function calls (RCE)"""
         self.assertUnsafe('__import__("os").system("id")')
